@@ -22,6 +22,7 @@ account_data <- fread("account_data.txt", header = T, skip = 1)
 personal_flexquery_id <- as.numeric(account_data[variable=="flexquery_id",2])
 personal_flexquery_token <- as.character(account_data[variable=="flexquery_token",2])
 personal_account_size <- as.numeric(account_data[variable=="acount_size",2])
+personal_start_date <- as.numeric(account_data[variable=="start_date",2])
 
 
 
@@ -85,8 +86,8 @@ trades <- trades %>% select(-dateTime) %>% mutate(description=as.character(descr
 
 
 #start from 8th of June serious strategy 
-trades <- trades %>% filter(timestamp>="2020-06-08 08:00:00")
-spx_1min_fortrades <- spx_1min %>% filter(timestamp>="2020-06-08 08:00:00")
+trades <- trades %>% filter(timestamp>=personal_start_date)
+spx_1min_fortrades <- spx_1min %>% filter(timestamp>=personal_start_date)
 
 #create traded strategies aggregated data
 trades_opened <- trades %>% mutate(minute=round_date(timestamp,unit = "1minute")) %>% filter(openCloseIndicator=="O") %>% group_by(expiry,minute,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), splittrades=length(quantity)/2, contracts=sum(quantity[quantity>0]), credit=format(sum(tradePrice*sign(quantity)/splittrades*(-1)), digits = 2, nsmall = 2), commissions_bot=sum(ibCommission)) %>% select(-splittrades)
