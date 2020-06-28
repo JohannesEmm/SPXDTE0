@@ -1,0 +1,5 @@
+#add your flexquery id and token from your Interactive Brokers account, and your account size (in USD) below, and save this file as account_data.txt
+variable, value
+flexquery_id, xxxxx
+flexquery_token, "xxx"
+account_size, 100000
