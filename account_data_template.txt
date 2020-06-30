@@ -1,4 +1,4 @@
-#add your flexquery id and token from your Interactive Brokers account, and your account size (in USD) below, and save this file as account_data.txt
+#add your flexquery id (create one just selecting "Trades" and "XML" as format and your desired date range (MTD for instance) and leave all other options at their default values) and token from your Interactive Brokers account, and your account size (in USD) below, and save this file as account_data.txt
 variable, value
 flexquery_id, xxxxx
 flexquery_token, "xxx"
