@@ -181,7 +181,7 @@ p_candlestick_trades <- ggplot(spx_1min_fortrades %>% mutate(Close=ifelse(new_da
   geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, colour = putCall), size=2) +
   #  theme_tq() + scale_x_datetime(date_labels = '%e %b',date_breaks = '1 day', limits = c(x_min, x_max)) + 
   geom_label(data=trades_strategies %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5) + geom_label(data=trades_strategies %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)  + xlab("") + ylab("SPX") + 
-  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = SPX_at_open, xend = timestamp_chr_closed, yend = strike), size=0.1, color="grey", alpha=0.4) + scale_colour_manual(values = c("P"="blue", "C"="orange"), labels=c("Bull Put Spread", "Bear Call Spread"), name="Strategy")# + theme(legend.position = "none")
+  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = SPX_at_open, xend = timestamp_chr_closed, yend = strike), size=0.1, color="grey", alpha=0.4) + scale_colour_manual(values = c("P"="blue", "C"="orange"), labels=c("P"="Put Credit Spread", "C"="Call Credit Spread"), name="Strategy")# + theme(legend.position = "none")
 print(p_candlestick_trades)
 
 #PnL
