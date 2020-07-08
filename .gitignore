@@ -4,6 +4,7 @@
 # Whitelist some files
 !.gitignore
 !README.md
+!account_data_template.txt
 
 # Always ignore
 .DS_Store
@@ -15,6 +16,8 @@
 
 #Custom ignoring
 account_data.txt
+error_trades.txt
 *.pdf
 *.png
 *.xml
+*.zip

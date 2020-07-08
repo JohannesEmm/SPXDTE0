@@ -2,7 +2,7 @@ A set of functions for analyzing, logging, and automated trading of SPX DTE0 opt
 
 Requirements:
 1) R & Rstudio(recommended) OPEN SOURCE software
-2) Interactive Brokers account with TWS software and API enabled
+2) Interactive Brokers account with TWS software and API enabled (only for SPX data)
 3) A flexquery for your trades (see below).
 
 How to:
