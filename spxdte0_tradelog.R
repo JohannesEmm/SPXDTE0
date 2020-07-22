@@ -12,9 +12,13 @@ require_package <- function(package){
   }
   suppressPackageStartupMessages(library(package,character.only=T, quietly = TRUE))  
 }
-pkgs <- c('data.table', 'tidyverse', 'ggrepel', 'ggpubr', 'quantmod', 'tidyquant', 'plotly', 'pingr', 'lubridate', 'XML', 'IBrokers', 'IButils', 'zoo', 'scales')
+pkgs <- c('data.table', 'tidyverse', 'ggrepel', 'ggpubr', 'quantmod', 'tidyquant', 'plotly', 'pingr', 'lubridate', 'XML', 'IBrokers', 'IButils', 'zoo', 'scales', 'rstudioapi')
 res <- lapply(pkgs, require_package)
 
+#set current directory
+path <- rstudioapi::getActiveDocumentContext()$path
+Encoding(path) <- "UTF-8"
+setwd(dirname(path))
 
 
 #read personal account details for flexquery and size
@@ -70,7 +74,7 @@ spx_day <- spx_1min %>% group_by(date) %>% summarize(Open=first(Open), High=max(
 
 
 #Get trades from Interactive Brokers through flexquery
-if(flex_web_service(file = "flexquerytemp.xml", token = personal_flexquery_token, query = personal_flexquery_id, version = 3, delay = 5, no.write.msg = TRUE, no.write.warn = TRUE, verbose = TRUE)==1) print("Flexquery not succesfully retrieved, please try again shortly.")
+if(flex_web_service(file = "flexquerytemp.xml", token = personal_flexquery_token, query = personal_flexquery_id, version = 3, delay = 5, no.write.msg = TRUE, no.write.warn = TRUE, verbose = TRUE)==1) stop("Flexquery not succesfully retrieved, please try again shortly.")
 flexquery <- xmlParse("flexquerytemp.xml")
 flexquery_list <- xmlToList(flexquery)
 trades <- as.data.frame(flexquery_list[["FlexStatements"]][["FlexStatement"]][["Trades"]])
@@ -163,6 +167,11 @@ trades_opened_closed <- trades_opened_closed %>% mutate(Pnl_recomputed=-(quantit
 
 #create aggregated data combining splittrades for: CREDIT SPREADS
 trades_strategies <- trades_opened_closed %>% group_by(expiry,time_opened_round,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), contracts=mean(abs(quantity)), credit=format(sum(tradePrice*sign(quantity)*(-1)), digits = 2, nsmall = 2), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=format(sum(tradePrice_closed*sign(quantity)*(-1)), digits = 2, nsmall = 2), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% ungroup()
+
+#if the short option is rolled, replace long leg based on existing open contracts at zero costs
+trades_strategies <- trades_strategies %>% group_by(expiry,putCall) %>% mutate(strike_long = ifelse(wing==0, lag(strike_long), strike_long), strategy = ifelse(wing==0, paste0(putCall, "", strike_short,"/",strike_long), strategy), debit = ifelse(wing==0, 0, debit), commissions_closed = ifelse(wing==0, 0, commissions_closed), wing = ifelse(wing==0, abs(strike_long-strike_short), wing))
+
+
 #define final PnL and strike (=strike_short) and add SPX at open  
 trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short)
 
