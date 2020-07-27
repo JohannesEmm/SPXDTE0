@@ -61,11 +61,6 @@ if(!is.na(ping_port(port=7496,destination = "localhost", count = 1))){
   print(str_glue("New data added on SPX from {first(spx_1min_new$date)} to {last(spx_1min_new$date)}"))
   save(spx_1min, file = "spx_1min.Rdata"); save(vix_1min, file = "vix_1min.Rdata"); 
 }
-#compute daily data
-spx_day <- spx_1min %>% group_by(date) %>% summarize(Open=first(Open), High=max(High), Low=min(Low), Close=last(Close)) %>% mutate(range=High-Low, closediff=Close-lag(Close))
-#ggplot(spx_day) + geom_histogram(aes(range))
-#ggplot(spx_day) + geom_histogram(aes(closediff))
-#spx_day %>% plot_ly(x = ~date, type="candlestick",open = ~Open, close = ~Close,high = ~High, low = ~Low) %>% layout(title="SPX Daily")
 
 
 
@@ -74,6 +69,7 @@ spx_day <- spx_1min %>% group_by(date) %>% summarize(Open=first(Open), High=max(
 
 
 #Get trades from Interactive Brokers through flexquery
+load("spx_1min.Rdata"); load("vix_1min.Rdata"); 
 if(flex_web_service(file = "flexquerytemp.xml", token = personal_flexquery_token, query = personal_flexquery_id, version = 3, delay = 5, no.write.msg = TRUE, no.write.warn = TRUE, verbose = TRUE)==1) stop("Flexquery not succesfully retrieved, please try again shortly.")
 flexquery <- xmlParse("flexquerytemp.xml")
 flexquery_list <- xmlToList(flexquery)
@@ -99,7 +95,6 @@ if(file.exists("error_trades.txt")){
     if(is.na(error_trades$timestamp[i])) trades <- trades %>% filter(description!=as.character(error_trades$contract[i]))
     if(!is.na(error_trades$timestamp[i])) trades <- trades %>% filter(!(description==as.character(error_trades$contract[i]) & as.character(timestamp)==as.character(error_trades$timestamp[i]) & as.character(openCloseIndicator)==as.character(error_trades$opened_closed[i])))
   }}
-
 
 ####### FIFO:  combine opened and closed individual positions and options using FiFo trades > trades_opened_closed ######
 trades_opened <- trades %>% filter(openCloseIndicator=="O") 
@@ -160,6 +155,10 @@ for(i in 1:nrow(trades_opened)){
 trades_opened_closed <- trades_opened_closed %>% mutate(ibCommission_closed=replace_na(ibCommission_closed,0), tradePrice_closed=replace_na(tradePrice_closed,0))
 trades_opened_closed$timestamp_closed <- as.POSIXct(ifelse(is.na(trades_opened_closed$timestamp_closed), as.POSIXct(paste0(date(trades_opened_closed$timestamp), " 16:20:00"), tz = "America/New_York"), trades_opened_closed$timestamp_closed), tz = "America/New_York", origin = lubridate::origin)
 
+#If trade opened before regular trading hours, assume it was done at the open for simplicity for now
+trades_opened_closed <- trades_opened_closed %>% mutate(timestamp = as.POSIXct(ifelse(format(timestamp, "%H:%M:%S") < "09:30:00",  as.POSIXct(paste0(date(timestamp), " 09:30:00"), tz = "America/New_York", origin = lubridate::origin), timestamp), tz = "America/New_York", origin = lubridate::origin))
+
+
 #Combine splittrades
 trades_opened_closed <- trades_opened_closed %>% mutate(time_opened_round=round_date(timestamp,unit = "2minute")) %>% group_by(description,strike,expiry,putCall,time_opened_round) %>% summarize(tradePrice=weighted.mean(tradePrice,w = quantity), ibCommission=sum(ibCommission), fifoPnlRealized=sum(fifoPnlRealized), timestamp = weighted.mean(timestamp, w = quantity), tradePrice_closed=weighted.mean(tradePrice_closed,w = quantity), ibCommission_closed=sum(ibCommission_closed), fifoPnlRealized_closed=sum(fifoPnlRealized_closed), timestamp_closed=weighted.mean(timestamp_closed, w = quantity), quantity = sum(quantity))
 #Recompute PnL based on individual positions
@@ -171,20 +170,25 @@ trades_strategies <- trades_opened_closed %>% group_by(expiry,time_opened_round,
 #if the short option is rolled, replace long leg based on existing open contracts at zero costs
 trades_strategies <- trades_strategies %>% group_by(expiry,putCall) %>% mutate(strike_long = ifelse(wing==0, lag(strike_long), strike_long), strategy = ifelse(wing==0, paste0(putCall, "", strike_short,"/",strike_long), strategy), debit = ifelse(wing==0, 0, debit), commissions_closed = ifelse(wing==0, 0, commissions_closed), wing = ifelse(wing==0, abs(strike_long-strike_short), wing))
 
-
 #define final PnL and strike (=strike_short) and add SPX at open  
 trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short)
 
 #verify consistency of fifoPnl
 print(trades %>% group_by(expiry) %>% summarize(PnL_trades_original_IB=sum(fifoPnlRealized, na.rm=T)) %>% full_join(trades_opened_closed %>% group_by(expiry) %>% summarize(PnL_trades_opened_close=sum(fifoPnlRealized_closed, na.rm=T), PnL_opened_closed_recomputed=sum(Pnl_recomputed, na.rm=T))) %>% full_join(trades_strategies %>% group_by(expiry) %>% summarize(PnL_strategies_IB=sum(PnL_strategies_IB, na.rm=T), PnL_strategies_recomputed=sum(PnL_strategies_recomputed, na.rm=T))) %>% as.data.frame())
 
-
-#Some basic stats
+#Some basic statistics
 performance_stats <- trades_strategies %>% group_by() %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
 print(performance_stats)
 
 
-#Figures
+
+
+
+
+
+
+
+########### Figures ##############
 spx_1min_fortrades <- spx_1min %>% filter(timestamp>=personal_start_date)
 
 x_min <- as.POSIXct(paste0(date(min(spx_1min_fortrades$timestamp)), " 00:00:00"), tz = "America/New_York")
@@ -210,9 +214,10 @@ p_candlestick_trades <- ggplot(spx_1min_fortrades %>% mutate(Close=ifelse(new_da
   geom_line(na.rm = F) +
   theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) +
   geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, colour = putCall), size=2) +
-  #  theme_tq() + scale_x_datetime(date_labels = '%e %b',date_breaks = '1 day', limits = c(x_min, x_max)) + 
-  geom_label(data=trades_strategies %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5) + geom_label(data=trades_strategies %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)  + xlab("") + ylab("SPX") + 
-  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = SPX_at_open, xend = timestamp_chr_closed, yend = strike), size=0.1, color="grey", alpha=0.4) + scale_colour_manual(values = c("P"="blue", "C"="orange"), labels=c("P"="Put Credit Spread", "C"="Call Credit Spread"), name="Strategy")# + theme(legend.position = "none")
+  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = strike_long, xend = timestamp_chr_closed, yend = strike_long, colour = putCall), size=0.5) + 
+  geom_label(data=trades_strategies %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit}{ifelse(as.numeric(debit)>0,paste0('>',debit),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5) + geom_label(data=trades_strategies %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit}{ifelse(as.numeric(debit)>0,paste0('>',debit),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)  + xlab("") + ylab("SPX") + 
+#  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = SPX_at_open, xend = timestamp_chr_closed, yend = strike), size=0.1, color="grey", alpha=0.4) + 
+  scale_colour_manual(values = c("P"="blue", "C"="orange"), labels=c("P"="Put Credit Spread", "C"="Call Credit Spread"), name="Strategy")
 print(p_candlestick_trades)
 
 #PnL
@@ -233,7 +238,8 @@ p_total_line <- ggplot(data = trades_strategies_for_pnl) +
   geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
     geom_line(aes(x = day_opened_midday, y = Total, group=1), color="blue", size=2) + xlab("") + geom_text(aes(x = day_opened, y = 100), label="   ") + 
     ylab("Total") + theme(legend.position = "none") + geom_text(data = trades_strategies_for_pnl %>% filter(!is.na(PnL)), aes(x = day_opened_midday, y = Total+ifelse(PnL<0,-1,+1)*shiftlabel_dollar*2, label=sprintf('%+.0f$', Total)), color="blue") + 
-    geom_label(aes(x = my_breaks_no_weekends[2], y = performance_stats$Total*.7, hjust = "left", label=paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ,"\n", "Avg. Gain = ", sprintf(performance_stats$AvgGain, fmt = "%.0f$"),"\n", "Avg. Loss = ", sprintf(performance_stats$AvgLoss, fmt = "%.0f$") ,"\n", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$"))), size=3, fill="grey90", alpha=0.6)
+    geom_label(aes(x = my_breaks_no_weekends[2], y = performance_stats$Total*.7, hjust = "left", label=paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ,"\n", "Avg. Gain = ", sprintf(performance_stats$AvgGain, fmt = "%.0f$"),"\n", "Avg. Loss = ", sprintf(performance_stats$AvgLoss, fmt = "%.0f$") ,"\n", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$"))), size=3, fill="grey90", alpha=0.6) + 
+  geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,600), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
 print(p_total_line)
 
 #Arranged combined figure
@@ -242,11 +248,8 @@ ggsave("Trading_log.pdf", device = "pdf", width = 15, height = 10)
 #now full also (wide scaling the width by months in the data)
 ggsave("Trading_log_full.pdf", device = "pdf", width = 15*interval(personal_start_date, now()) / months(1), height = 10)
 
+################ END FIGURE ##################
 
-
-#IB API get SPXW options
-#option1 <- twsOption("SPXW  200708C03130000")
-#option1_data <- reqMktData(tws, option1, snapshot = T) 
 
 
 

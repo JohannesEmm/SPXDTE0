@@ -67,4 +67,4 @@ nrow=4, common.legend = T, legend = "bottom", labels = c("a", "b", "c"))
 annotate_figure(arranged_spx_analysis, 
                 bottom = text_grob(paste0("Data from 1 Jan '05 to ", last_spx$date_nice, ". S&P500 @ ", last_spx$Close), hjust = 1, x = 1, face = "italic", size = 12))
 ggsave("SPX_Statistics.pdf", device = "pdf", width = 15, height = 10)
-
+.
