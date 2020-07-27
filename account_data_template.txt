@@ -4,3 +4,4 @@ flexquery_id, xxxxx
 flexquery_token, "xxx"
 account_size, 100000
 personal_start_date, "2020-06-08 08:00:00"
+daily_goal, 100

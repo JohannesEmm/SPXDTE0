@@ -27,6 +27,8 @@ personal_flexquery_id <- as.numeric(account_data[variable=="flexquery_id",2])
 personal_flexquery_token <- as.character(account_data[variable=="flexquery_token",2])
 personal_account_size <- as.numeric(account_data[variable=="acount_size",2])
 personal_start_date <- as.character(account_data[variable=="personal_start_date",2])
+daily_goal <- as.character(account_data[variable=="daily_goal",2])
+
 
 
 
@@ -239,7 +241,7 @@ p_total_line <- ggplot(data = trades_strategies_for_pnl) +
     geom_line(aes(x = day_opened_midday, y = Total, group=1), color="blue", size=2) + xlab("") + geom_text(aes(x = day_opened, y = 100), label="   ") + 
     ylab("Total") + theme(legend.position = "none") + geom_text(data = trades_strategies_for_pnl %>% filter(!is.na(PnL)), aes(x = day_opened_midday, y = Total+ifelse(PnL<0,-1,+1)*shiftlabel_dollar*2, label=sprintf('%+.0f$', Total)), color="blue") + 
     geom_label(aes(x = my_breaks_no_weekends[2], y = performance_stats$Total*.7, hjust = "left", label=paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ,"\n", "Avg. Gain = ", sprintf(performance_stats$AvgGain, fmt = "%.0f$"),"\n", "Avg. Loss = ", sprintf(performance_stats$AvgLoss, fmt = "%.0f$") ,"\n", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$"))), size=3, fill="grey90", alpha=0.6) + 
-  geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,600), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
+  geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,daily_goal), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
 print(p_total_line)
 
 #Arranged combined figure
