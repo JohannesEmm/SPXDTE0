@@ -126,12 +126,17 @@ for(i in 1:nrow(trades_opened)){
     tradePrice = tradePrice + current_closing_trade$tradePrice
     ibCommission = ibCommission + current_closing_trade$ibCommission
     fifoPnlRealized = fifoPnlRealized + current_closing_trade$fifoPnlRealized
-    if(current_closing_trade$quantity==0){ #if full closing trade has been used update trades_closed data frame (no more closing contracts at the current closing trade)
+    if(current_closing_trade$quantity==0){ #if full closing trade has been used => update trades_closed data frame (no more closing contracts at the current closing trade)
       trades_closed <- trades_closed %>% mutate(quantity = ifelse(expiry==exp & putCall==pc & strike==strk & close_id==current_closing_trade$close_id, 0, quantity))
       #if not yet fully closed, move to next closing trade (FiFo)
       if(item<abs(num)){
       closing_trade_num <- closing_trade_num + 1
+      if(nrow(current_closing_trade_all)<closing_trade_num){
+        #no further closed trade, so set all other closes as zero expired ones
+        item = abs(num)
+      }else{
       current_closing_trade <- current_closing_trade_all[closing_trade_num,]
+      }
       }
       }
     if(item==abs(num)) { #last contract has been closed
@@ -158,7 +163,7 @@ trades_opened_closed <- trades_opened_closed %>% mutate(ibCommission_closed=repl
 trades_opened_closed$timestamp_closed <- as.POSIXct(ifelse(is.na(trades_opened_closed$timestamp_closed), as.POSIXct(paste0(date(trades_opened_closed$timestamp), " 16:20:00"), tz = "America/New_York"), trades_opened_closed$timestamp_closed), tz = "America/New_York", origin = lubridate::origin)
 
 #If trade opened before regular trading hours, assume it was done at the open for simplicity for now
-trades_opened_closed <- trades_opened_closed %>% mutate(timestamp = as.POSIXct(ifelse(format(timestamp, "%H:%M:%S") < "09:30:00",  as.POSIXct(paste0(date(timestamp), " 09:30:00"), tz = "America/New_York", origin = lubridate::origin), timestamp), tz = "America/New_York", origin = lubridate::origin))
+trades_opened_closed <- trades_opened_closed %>% rowwise() %>% mutate(timestamp = as.POSIXct(ifelse(format(timestamp, "%H:%M:%S") < "09:30:00",  as.POSIXct(paste0(date(timestamp), " 09:30:", sprintf("%02d", as.integer(runif(1, min=0, max=59)))), tz = "America/New_York", origin = lubridate::origin), timestamp), tz = "America/New_York", origin = lubridate::origin))
 
 
 #Combine splittrades
@@ -166,20 +171,30 @@ trades_opened_closed <- trades_opened_closed %>% mutate(time_opened_round=round_
 #Recompute PnL based on individual positions
 trades_opened_closed <- trades_opened_closed %>% mutate(Pnl_recomputed=-(quantity)*(tradePrice - tradePrice_closed)*100+ibCommission+ibCommission_closed)                                                          
 
-#create aggregated data combining splittrades for: CREDIT SPREADS
-trades_strategies <- trades_opened_closed %>% group_by(expiry,time_opened_round,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), contracts=mean(abs(quantity)), credit=format(sum(tradePrice*sign(quantity)*(-1)), digits = 2, nsmall = 2), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=format(sum(tradePrice_closed*sign(quantity)*(-1)), digits = 2, nsmall = 2), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% ungroup()
+#create aggregated strategies (going from complex to simple:
+trades_opened_closed_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% filter(n() > 2)
+trades_opened_closed_without_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% filter(n() <= 2)
+#1) Iron butterflies
+trades_strategies_complex <- trades_opened_closed_complex_strategies %>% group_by(expiry,time_opened_round) %>% summarize(putCall="Both", date_opened=min(timestamp), strike_short=mean(strike[quantity<0]), strike_long=min(strike), strike_long2=max(strike), wing=strike_short-min(strike), strategy=paste0("IF",min(strike),"/",strike_short,"/",max(strike)), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% mutate(type="Iron Butterfly") %>% ungroup()
+
+#2) CREDIT SPREADS for remaining trades!
+trades_strategies_spreads <- trades_opened_closed_without_complex_strategies %>% group_by(expiry,time_opened_round,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), strike_long2=NA, wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% mutate(type=ifelse(putCall[1]=="C", "Call Credit Spread", "Put Credit Spread")) %>% ungroup()
 
 #if the short option is rolled, replace long leg based on existing open contracts at zero costs
-trades_strategies <- trades_strategies %>% group_by(expiry,putCall) %>% mutate(strike_long = ifelse(wing==0, lag(strike_long), strike_long), strategy = ifelse(wing==0, paste0(putCall, "", strike_short,"/",strike_long), strategy), debit = ifelse(wing==0, 0, debit), commissions_closed = ifelse(wing==0, 0, commissions_closed), wing = ifelse(wing==0, abs(strike_long-strike_short), wing))
+trades_strategies_spreads <- trades_strategies_spreads %>% group_by(expiry,putCall) %>% mutate(strike_long = ifelse(wing==0, lag(strike_long), strike_long), strategy = ifelse(wing==0, paste0(putCall, "", strike_short,"/",strike_long), strategy), debit = ifelse(wing==0, 0, debit), commissions_closed = ifelse(wing==0, 0, commissions_closed), wing = ifelse(wing==0, abs(strike_long-strike_short), wing)) %>% ungroup()
+
+#combine all strategies
+trades_strategies <- rbind(trades_strategies_spreads, trades_strategies_complex)
+
 
 #define final PnL and strike (=strike_short) and add SPX at open  
-trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short)
+trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short) %>% mutate(type = factor(type, levels = c("Call Credit Spread", "Put Credit Spread", "Iron Butterfly")))
 
 #verify consistency of fifoPnl
 print(trades %>% group_by(expiry) %>% summarize(PnL_trades_original_IB=sum(fifoPnlRealized, na.rm=T)) %>% full_join(trades_opened_closed %>% group_by(expiry) %>% summarize(PnL_trades_opened_close=sum(fifoPnlRealized_closed, na.rm=T), PnL_opened_closed_recomputed=sum(Pnl_recomputed, na.rm=T))) %>% full_join(trades_strategies %>% group_by(expiry) %>% summarize(PnL_strategies_IB=sum(PnL_strategies_IB, na.rm=T), PnL_strategies_recomputed=sum(PnL_strategies_recomputed, na.rm=T))) %>% as.data.frame())
 
 #Some basic statistics
-performance_stats <- trades_strategies %>% group_by() %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
+performance_stats <- trades_strategies %>% group_by(type) %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
 print(performance_stats)
 
 
@@ -215,11 +230,19 @@ shiftlabel=20;
 p_candlestick_trades <- ggplot(spx_1min_fortrades %>% mutate(Close=ifelse(new_day==1,NA,Close)), aes(x = timestamp_chr, y = Close, group = 1)) +  
   geom_line(na.rm = F) +
   theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) +
-  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, colour = putCall), size=2) +
-  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = strike_long, xend = timestamp_chr_closed, yend = strike_long, colour = putCall), size=0.5) + 
-  geom_label(data=trades_strategies %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit}{ifelse(as.numeric(debit)>0,paste0('>',debit),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5) + geom_label(data=trades_strategies %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{credit}{ifelse(as.numeric(debit)>0,paste0('>',debit),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)  + xlab("") + ylab("SPX") + 
+  #Credit Spreads
+  geom_segment(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, colour = type), size=2) +
+  geom_segment(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")), aes(x = timestamp_chr, y = strike_long, xend = timestamp_chr_closed, yend = strike_long, colour = type), size=0.5) + 
+  geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(debit)>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5) + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(format(debit, digits = 2, nsmall = 2))>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5) + 
+   xlab("") + ylab("SPX") + 
 #  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = SPX_at_open, xend = timestamp_chr_closed, yend = strike), size=0.1, color="grey", alpha=0.4) + 
-  scale_colour_manual(values = c("P"="blue", "C"="orange"), labels=c("P"="Put Credit Spread", "C"="Call Credit Spread"), name="Strategy")
+  scale_colour_manual(values = c("Put Credit Spread"="blue", "Call Credit Spread"="orange", "Iron Butterfly"="green"), labels=c("Put Credit Spread"="Put Credit Spread", "Call Credit Spread"="Call Credit Spread", "Iron Butterfly"="Iron Butterfly"), name="Strategy")
+
+#Add Iron Butterflys
+if(nrow(trades_strategies %>% filter(type=="Iron Butterfly"))>0) p_candlestick_trades <- p_candlestick_trades + geom_segment(data=trades_strategies %>% filter(type=="Iron Butterfly"), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, color = type), size=2)
+  if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike+shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
+  if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike +shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
+  
 print(p_candlestick_trades)
 
 #PnL
