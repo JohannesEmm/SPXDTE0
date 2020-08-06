@@ -25,7 +25,7 @@ setwd(dirname(path))
 account_data <- fread("account_data.txt", header = T, skip = 1)
 personal_flexquery_id <- as.numeric(account_data[variable=="flexquery_id",2])
 personal_flexquery_token <- as.character(account_data[variable=="flexquery_token",2])
-personal_account_size <- as.numeric(account_data[variable=="acount_size",2])
+personal_account_size <- as.numeric(account_data[variable=="account_size",2])
 personal_start_date <- as.character(account_data[variable=="personal_start_date",2])
 daily_goal <- as.character(account_data[variable=="daily_goal",2])
 
@@ -33,14 +33,14 @@ daily_goal <- as.character(account_data[variable=="daily_goal",2])
 
 
 #get and update 1min SPX data
-load("spx_1min.Rdata"); load("vix_1min.Rdata"); 
+load("spx_1min.Rdata"); load("vix_1min.Rdata"); load("SPXTR.Rdata");
 print(str_glue("Last data SPX from {last(spx_1min$date)}"))
 # Connect to TWS and download SPX minute data if available
 if(!is.na(ping_port(port=7496,destination = "localhost", count = 1))){
   tws <- twsConnect(verbose = T)
   contract <- twsIndex('SPX','CBOE')
   #reqRealTimeBars # by default retreives 30 days of daily data
-  spx_last_month_1min <- reqHistoricalData(tws, Contract=contract, barSize = "1 min", useRTH = "1", duration = "10 d")
+  spx_last_month_1min <- reqHistoricalData(tws, Contract=contract, barSize = "1 min", useRTH = "1", duration = "30 d")
   tzone(spx_last_month_1min) <- "America/New_York"
   spx_last_month_1min <- data.frame(DateTime=index(spx_last_month_1min),coredata(spx_last_month_1min[,1:4]))
   names(spx_last_month_1min) <- c("DateTime", "Open", "High", "Low", "Close")
@@ -51,7 +51,7 @@ if(!is.na(ping_port(port=7496,destination = "localhost", count = 1))){
   #now get VIX also
   contract <- twsIndex('VIX','CBOE')
   #reqRealTimeBars # by default retreives 30 days of daily data
-  vix_last_month_1min <- reqHistoricalData(tws, Contract=contract, barSize = "1 min", useRTH = "1", duration = "6 d")
+  vix_last_month_1min <- reqHistoricalData(tws, Contract=contract, barSize = "1 min", useRTH = "1", duration = "30 d")
   tzone(vix_last_month_1min) <- "America/New_York"
   vix_last_month_1min <- data.frame(DateTime=index(vix_last_month_1min),coredata(vix_last_month_1min[,1:4]))
   names(vix_last_month_1min) <- c("DateTime", "Open", "High", "Low", "Close")
@@ -59,9 +59,17 @@ if(!is.na(ping_port(port=7496,destination = "localhost", count = 1))){
   #now update spx_1min
   vix_1min_new <- vix_last_month_1min %>% filter(timestamp>max(vix_1min$timestamp))
   vix_1min <- rbind(vix_1min, vix_1min_new)
+  #now get SPX Total Return also
+  SPXTR_new <- reqHistoricalData(tws, Contract=twsIndex('SPXT','PSE'), barSize = "1 day", useRTH = "1", duration = "30 d")
+  tzone(SPXTR_new) <- "America/New_York"
+  SPXTR_new <- data.frame(DateTime=index(SPXTR_new),coredata(SPXTR_new[,1:4]))
+  names(SPXTR_new) <- c("DateTime", "Open", "High", "Low", "Close")
+  SPXTR_new <- SPXTR_new %>% mutate(timestamp=as.POSIXct(DateTime, tz = "America/New_York")) %>% separate(DateTime, c("date", "time"), sep = " ")
+  SPXTR_new <- SPXTR_new %>% filter(timestamp>max(SPXTR$timestamp))
+  SPXTR <- rbind(SPXTR, SPXTR_new)
   twsDisconnect(tws)
   print(str_glue("New data added on SPX from {first(spx_1min_new$date)} to {last(spx_1min_new$date)}"))
-  save(spx_1min, file = "spx_1min.Rdata"); save(vix_1min, file = "vix_1min.Rdata"); 
+  save(spx_1min, file = "spx_1min.Rdata"); save(vix_1min, file = "vix_1min.Rdata"); save(SPXTR, file = "SPXTR.Rdata");
 }
 
 
@@ -71,7 +79,7 @@ if(!is.na(ping_port(port=7496,destination = "localhost", count = 1))){
 
 
 #Get trades from Interactive Brokers through flexquery
-load("spx_1min.Rdata"); load("vix_1min.Rdata"); 
+load("spx_1min.Rdata"); load("vix_1min.Rdata"); load("SPXTR.Rdata");
 if(flex_web_service(file = "flexquerytemp.xml", token = personal_flexquery_token, query = personal_flexquery_id, version = 3, delay = 5, no.write.msg = TRUE, no.write.warn = TRUE, verbose = TRUE)==1) stop("Flexquery not succesfully retrieved, please try again shortly.")
 flexquery <- xmlParse("flexquerytemp.xml")
 flexquery_list <- xmlToList(flexquery)
@@ -188,14 +196,15 @@ trades_strategies <- rbind(trades_strategies_spreads, trades_strategies_complex)
 
 
 #define final PnL and strike (=strike_short) and add SPX at open  
-trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short) %>% mutate(type = factor(type, levels = c("Call Credit Spread", "Put Credit Spread", "Iron Butterfly")))
+trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short)
 
 #verify consistency of fifoPnl
 print(trades %>% group_by(expiry) %>% summarize(PnL_trades_original_IB=sum(fifoPnlRealized, na.rm=T)) %>% full_join(trades_opened_closed %>% group_by(expiry) %>% summarize(PnL_trades_opened_close=sum(fifoPnlRealized_closed, na.rm=T), PnL_opened_closed_recomputed=sum(Pnl_recomputed, na.rm=T))) %>% full_join(trades_strategies %>% group_by(expiry) %>% summarize(PnL_strategies_IB=sum(PnL_strategies_IB, na.rm=T), PnL_strategies_recomputed=sum(PnL_strategies_recomputed, na.rm=T))) %>% as.data.frame())
 
 #Some basic statistics
-performance_stats <- trades_strategies %>% group_by(type) %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
-print(performance_stats)
+performance_stats_type <- trades_strategies %>% group_by(type) %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
+performance_stats <- trades_strategies %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
+print(performance_stats_type)
 
 
 
@@ -233,20 +242,22 @@ p_candlestick_trades <- ggplot(spx_1min_fortrades %>% mutate(Close=ifelse(new_da
   #Credit Spreads
   geom_segment(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, colour = type), size=2) +
   geom_segment(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")), aes(x = timestamp_chr, y = strike_long, xend = timestamp_chr_closed, yend = strike_long, colour = type), size=0.5) + 
-  geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(debit)>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5) + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(format(debit, digits = 2, nsmall = 2))>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5) + 
-   xlab("") + ylab("SPX") + 
-#  geom_segment(data=trades_strategies, aes(x = timestamp_chr, y = SPX_at_open, xend = timestamp_chr_closed, yend = strike), size=0.1, color="grey", alpha=0.4) + 
+  xlab("") + ylab("SPX") + 
   scale_colour_manual(values = c("Put Credit Spread"="blue", "Call Credit Spread"="orange", "Iron Butterfly"="green"), labels=c("Put Credit Spread"="Put Credit Spread", "Call Credit Spread"="Call Credit Spread", "Iron Butterfly"="Iron Butterfly"), name="Strategy")
+#Add labels if gains or losses there
+if(nrow(trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(debit)>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
+if(nrow(trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(format(debit, digits = 2, nsmall = 2))>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
 
-#Add Iron Butterflys
+  #Add Iron Butterflys
 if(nrow(trades_strategies %>% filter(type=="Iron Butterfly"))>0) p_candlestick_trades <- p_candlestick_trades + geom_segment(data=trades_strategies %>% filter(type=="Iron Butterfly"), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, color = type), size=2)
   if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike+shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
-  if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike +shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
+  if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike +shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
   
 print(p_candlestick_trades)
 
 #PnL
 my_breaks_no_weekends <- paste(unique(spx_1min_fortrades$date), "09:30:00")
+
 trades_strategies_for_pnl <- trades_strategies %>% mutate(day_opened= paste(as.Date(day_opened),"09:30:00")) %>% group_by(day_opened) %>% summarize(PnL=sum(PnL)) %>% mutate(Total=cumsum(PnL)) %>% complete(day_opened=my_breaks_no_weekends) %>% mutate(day_opened_midday=paste(date(day_opened), "12:45:00")) %>% mutate(PnL=ifelse(day_opened==paste(as.Date(today()),"09:30:00"), 0, PnL), Total=zoo::na.locf(Total))
 #Bar chart per day
 shiftlabel_dollar=250
@@ -267,17 +278,23 @@ p_total_line <- ggplot(data = trades_strategies_for_pnl) +
   geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,daily_goal), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
 print(p_total_line)
 
+#Line chart relative
+trades_strategies_for_pnl_relative <- (trades_strategies_for_pnl %>% mutate(date=as.character(date(day_opened))) %>% left_join(SPXTR %>% select(date, Close))) %>% left_join(spx_1min %>% filter(date>personal_start_date) %>% group_by(date) %>% summarize(SPX_close=last(Close))) %>% mutate(relative_gain=(Total/personal_account_size), SPXTR=Close/Close[1]-1, SPX=SPX_close/SPX_close[1]-1)
+p_total_relative <- ggplot(data = trades_strategies_for_pnl_relative) +
+  theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + scale_y_continuous(labels = scales::percent_format(accuracy=.01)) +
+  geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
+  geom_line(aes(x = day_opened_midday, y = relative_gain, group=1), color="blue", size=2) +
+  geom_line(aes(x = day_opened_midday, y = SPXTR, group=1), color="slateblue1", size=1) +
+  geom_line(aes(x = day_opened_midday, y = SPX, group=1), color="steelblue2", size=1) + xlab("") +
+  ylab("Relative Performance") + geom_text(aes(x = day_opened, y = 0), label="   ") + annotate("text", x = 2, y=0.03, hjust = 0, label="Portfolio", color="blue") + annotate("text", x = 2, y=0.01, hjust = 0, label="S&P500", color="steelblue2") + annotate("text", x = 2, y=0.02, hjust = 0, label="S&P500 TR", color="slateblue1")
+print(p_total_relative)
+
 #Arranged combined figure
-print(ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line, nrow = 3, heights = c(.6,.2,.2), common.legend = T, legend = "bottom", hjust=c(0, 0, 0)))
+#print(ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line, nrow = 3, heights = c(.6,.2,.2), common.legend = T, legend = "bottom", hjust=c(0, 0, 0)))
+print(ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_relative, nrow = 4, heights = c(.55,.15,.15,.15), common.legend = T, legend = "bottom", hjust=c(0, 0, 0, 0)))
 ggsave("Trading_log.pdf", device = "pdf", width = 15, height = 10)
 #now full also (wide scaling the width by months in the data)
 ggsave("Trading_log_full.pdf", device = "pdf", width = 15*interval(personal_start_date, now()) / months(1), height = 10)
 
 ################ END FIGURE ##################
-
-
-
-
-
-
 
