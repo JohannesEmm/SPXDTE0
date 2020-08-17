@@ -29,14 +29,14 @@ personal_account_size <- as.numeric(account_data[variable=="account_size",2])
 personal_start_date <- as.character(account_data[variable=="personal_start_date",2])
 daily_goal <- as.character(account_data[variable=="daily_goal",2])
 
+include_complex_strategies <- T
 
 
-
-#get and update 1min SPX data
-load("spx_1min.Rdata"); load("vix_1min.Rdata"); load("SPXTR.Rdata");
-print(str_glue("Last data SPX from {last(spx_1min$date)}"))
 # Connect to TWS and download SPX minute data if available
 if(!is.na(ping_port(port=7496,destination = "localhost", count = 1))){
+  #get and update 1min SPX data
+  load("spx_1min.Rdata"); load("vix_1min.Rdata"); load("SPXTR.Rdata");
+  print(str_glue("Last data SPX from {last(spx_1min$date)}"))
   tws <- twsConnect(verbose = T)
   contract <- twsIndex('SPX','CBOE')
   #reqRealTimeBars # by default retreives 30 days of daily data
@@ -175,7 +175,7 @@ trades_opened_closed <- trades_opened_closed %>% rowwise() %>% mutate(timestamp 
 
 
 #Combine splittrades
-trades_opened_closed <- trades_opened_closed %>% mutate(time_opened_round=round_date(timestamp,unit = "2minute")) %>% group_by(description,strike,expiry,putCall,time_opened_round) %>% summarize(tradePrice=weighted.mean(tradePrice,w = quantity), ibCommission=sum(ibCommission), fifoPnlRealized=sum(fifoPnlRealized), timestamp = weighted.mean(timestamp, w = quantity), tradePrice_closed=weighted.mean(tradePrice_closed,w = quantity), ibCommission_closed=sum(ibCommission_closed), fifoPnlRealized_closed=sum(fifoPnlRealized_closed), timestamp_closed=weighted.mean(timestamp_closed, w = quantity), quantity = sum(quantity))
+trades_opened_closed <- trades_opened_closed %>% mutate(time_opened_round=round_date(timestamp,unit = "10minute")) %>% group_by(description,strike,expiry,putCall,time_opened_round) %>% summarize(tradePrice=weighted.mean(tradePrice,w = quantity), ibCommission=sum(ibCommission), fifoPnlRealized=sum(fifoPnlRealized), timestamp = weighted.mean(timestamp, w = quantity), tradePrice_closed=weighted.mean(tradePrice_closed,w = quantity), ibCommission_closed=sum(ibCommission_closed), fifoPnlRealized_closed=sum(fifoPnlRealized_closed), timestamp_closed=weighted.mean(timestamp_closed, w = quantity), quantity = sum(quantity))
 #Recompute PnL based on individual positions
 trades_opened_closed <- trades_opened_closed %>% mutate(Pnl_recomputed=-(quantity)*(tradePrice - tradePrice_closed)*100+ibCommission+ibCommission_closed)                                                          
 
@@ -186,13 +186,13 @@ trades_opened_closed_without_complex_strategies <- trades_opened_closed %>% grou
 trades_strategies_complex <- trades_opened_closed_complex_strategies %>% group_by(expiry,time_opened_round) %>% summarize(putCall="Both", date_opened=min(timestamp), strike_short=mean(strike[quantity<0]), strike_long=min(strike), strike_long2=max(strike), wing=strike_short-min(strike), strategy=paste0("IF",min(strike),"/",strike_short,"/",max(strike)), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% mutate(type="Iron Butterfly") %>% ungroup()
 
 #2) CREDIT SPREADS for remaining trades!
-trades_strategies_spreads <- trades_opened_closed_without_complex_strategies %>% group_by(expiry,time_opened_round,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), strike_long2=NA, wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% mutate(type=ifelse(putCall[1]=="C", "Call Credit Spread", "Put Credit Spread")) %>% ungroup()
+trades_strategies_spreads <- trades_opened_closed_without_complex_strategies %>% group_by(expiry,time_opened_round,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), strike_long2=NA, wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed) %>% ungroup()
 
 #if the short option is rolled, replace long leg based on existing open contracts at zero costs
-trades_strategies_spreads <- trades_strategies_spreads %>% group_by(expiry,putCall) %>% mutate(strike_long = ifelse(wing==0, lag(strike_long), strike_long), strategy = ifelse(wing==0, paste0(putCall, "", strike_short,"/",strike_long), strategy), debit = ifelse(wing==0, 0, debit), commissions_closed = ifelse(wing==0, 0, commissions_closed), wing = ifelse(wing==0, abs(strike_long-strike_short), wing)) %>% ungroup()
+trades_strategies_spreads <- trades_strategies_spreads %>% group_by(expiry,putCall) %>% mutate(strike_long = ifelse(wing==0, lag(strike_long), strike_long), strategy = ifelse(wing==0, paste0(putCall, "", strike_short,"/",strike_long), strategy), debit = ifelse(wing==0, 0, debit), commissions_closed = ifelse(wing==0, 0, commissions_closed), wing = ifelse(wing==0, abs(strike_long-strike_short), wing)) %>% mutate(type=ifelse(putCall=="C", "Call Credit Spread", "Put Credit Spread")) %>% ungroup()
 
 #combine all strategies
-trades_strategies <- rbind(trades_strategies_spreads, trades_strategies_complex)
+if(include_complex_strategies) trades_strategies <- rbind(trades_strategies_spreads, trades_strategies_complex) else trades_strategies <- trades_strategies_spreads
 
 
 #define final PnL and strike (=strike_short) and add SPX at open  
