@@ -12,7 +12,7 @@ require_package <- function(package){
   }
   suppressPackageStartupMessages(library(package,character.only=T, quietly = TRUE))  
 }
-pkgs <- c('data.table', 'tidyverse', 'ggrepel', 'ggpubr', 'quantmod', 'tidyquant', 'plotly', 'pingr', 'lubridate', 'XML', 'IBrokers', 'IButils', 'zoo', 'scales', 'rstudioapi')
+pkgs <- c('data.table', 'tidyverse', 'ggrepel', 'ggpubr', 'quantmod', 'tidyquant', 'plotly', 'pingr', 'lubridate', 'XML', 'IBrokers', 'IButils', 'zoo', 'scales', 'rstudioapi', 'tis')
 res <- lapply(pkgs, require_package)
 
 #set current directory
@@ -34,8 +34,7 @@ include_complex_strategies <- F
 load("spx_1min.Rdata"); load("vix_1min.Rdata");
 print(str_glue("Last data SPX from {last(spx_1min$date)}"))
 # Connect to TWS and download SPX minute data if available
-get_tws_data <- readline('Shall I get TWS data? \n 1. "y" \n 2. "n" \n')
-if(get_tws_data=="y") source("get_tws_data.R")
+#if(as.Date(previousBusinessDay(Sys.Date()))>last(spx_1min$date)) source("get_tws_data.R")
 
 
 
@@ -148,10 +147,10 @@ trades_for_models = as.data.frame(trades_opened_closed %>% mutate(timestamp=roun
 save(trades_for_models, file = "trades_for_models.RData")
 
 #create aggregated strategies (going from complex to simple:
-trades_opened_closed_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% filter(n() > 2)
-trades_opened_closed_without_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% filter(n() <= 2)
+trades_opened_closed_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% mutate(num_diff_strikes=length(unique(strike))) %>% filter(num_diff_strikes==3)
+trades_opened_closed_without_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% mutate(num_diff_strikes=length(unique(strike))) %>% filter(num_diff_strikes!=3)
 #1) Iron butterflies
-trades_strategies_complex <- trades_opened_closed_complex_strategies %>% group_by(expiry,time_opened_round) %>% summarize(putCall="Both", date_opened=min(timestamp), strike_short=mean(strike[quantity<0]), strike_long=min(strike), strike_long2=max(strike), wing=strike_short-min(strike), strategy=paste0("IF",min(strike),"/",strike_short,"/",max(strike)), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% mutate(type="Iron Butterfly") %>% ungroup()
+if(nrow(trades_opened_closed_complex_strategies)>0) trades_strategies_complex <- trades_opened_closed_complex_strategies %>% group_by(expiry,time_opened_round) %>% summarize(putCall="Both", date_opened=min(timestamp), strike_short=mean(strike[quantity<0]), strike_long=min(strike), strike_long2=max(strike), wing=strike_short-min(strike), strategy=paste0("IF",min(strike),"/",strike_short,"/",max(strike)), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed)  %>% mutate(type="Iron Butterfly") %>% ungroup()
 
 #2) CREDIT SPREADS for remaining trades!
 trades_strategies_spreads <- trades_opened_closed_without_complex_strategies %>% group_by(expiry,time_opened_round,putCall) %>% summarize(date_opened=min(timestamp), strike_short=ifelse(putCall[1]=="C",min(strike),max(strike)), strike_long=ifelse(putCall[1]=="C",max(strike),min(strike)), strike_long2=NA, wing=max(strike)-min(strike), strategy=ifelse(putCall[1]=="C", paste0(putCall[1], "", min(strike),"/",max(strike)), paste0(putCall[1], "", max(strike),"/",min(strike))), contracts=mean(abs(quantity)), credit=sum(tradePrice*sign(quantity)*(-1)), commissions_opened=sum(ibCommission), date_closed=min(timestamp_closed), debit=sum(tradePrice_closed*sign(quantity)*(-1)), commissions_closed=sum(ibCommission_closed), PnL_strategies_IB=sum(fifoPnlRealized_closed), PnL_strategies_recomputed=(as.numeric(credit)-as.numeric(debit))*contracts*100 + commissions_opened + commissions_closed) %>% ungroup()
@@ -186,13 +185,12 @@ print(performance_stats_type)
 spx_1min_fortrades <- spx_1min %>% filter(timestamp>=personal_start_date)
 
 x_min <- as.POSIXct(paste0(date(min(spx_1min_fortrades$timestamp)), " 00:00:00"), tz = "America/New_York")
-x_max <- as.POSIXct(paste0(today(), " 23:59:59"), tz = "America/New_York")
+x_max <- as.POSIXct(paste0(as.Date(today()), " 23:59:59"), tz = "America/New_York")
 #create empty data for SPX until x_max
 for(.day in seq(date(last(spx_1min_fortrades$timestamp))+1, date(x_max), by = "day")){
   spx_empty <- spx_1min_fortrades %>% filter(date==date(x_min)) %>% mutate(Open=as.numeric(NA),High=as.numeric(NA),Low=as.numeric(NA),Close=as.numeric(NA)) %>% mutate(date=as.character(as.Date(.day)), timestamp=as.POSIXct(paste0(date, " ",time), tz = "America/New_York"))
   spx_1min_fortrades <- rbind(spx_1min_fortrades, spx_empty)
 }
-
 #For plotting now only trading hours
 spx_1min_fortrades <- spx_1min_fortrades %>%
   mutate(timestamp_chr = as.character(timestamp), day = lubridate::day(timestamp),hour = lubridate::hour(timestamp),minute = lubridate::minute(timestamp),new_day = if_else(day != lag(day) | is.na(lag(day)), 1, 0))
@@ -215,18 +213,15 @@ p_candlestick_trades <- ggplot(spx_1min_fortrades %>% mutate(Close=ifelse(new_da
 #Add labels if gains or losses there
 if(nrow(trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(debit)>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
 if(nrow(trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(format(debit, digits = 2, nsmall = 2))>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
-
   #Add Iron Butterflys
 if(nrow(trades_strategies %>% filter(type=="Iron Butterfly"))>0) p_candlestick_trades <- p_candlestick_trades + geom_segment(data=trades_strategies %>% filter(type=="Iron Butterfly"), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, color = type), size=2)
   if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike+shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
   if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike +shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
-  
 print(p_candlestick_trades)
 
 #PnL
 my_breaks_no_weekends <- paste(unique(spx_1min_fortrades$date), "09:30:00")
-
-trades_strategies_for_pnl <- trades_strategies %>% mutate(day_opened= paste(as.Date(day_opened),"09:30:00")) %>% group_by(day_opened) %>% summarize(PnL=sum(PnL)) %>% mutate(Total=cumsum(PnL)) %>% complete(day_opened=my_breaks_no_weekends) %>% mutate(day_opened_midday=paste(date(day_opened), "12:45:00")) %>% mutate(PnL=ifelse(day_opened==paste(as.Date(today()),"09:30:00"), 0, PnL), Total=zoo::na.locf(Total))
+trades_strategies_for_pnl <- trades_strategies %>% mutate(day_opened= paste(as.Date(day_opened),"09:30:00")) %>% group_by(day_opened) %>% summarize(PnL=sum(PnL)) %>% mutate(Total=cumsum(PnL)) %>% complete(day_opened=my_breaks_no_weekends) %>% mutate(day_opened_midday=paste(date(day_opened), "12:45:00")) %>% mutate(PnL=ifelse(day_opened==paste(as.Date(today()),"09:30:00"), 0, PnL)) %>% mutate(Total=zoo::na.locf(Total, na.rm=F))
 #Bar chart per day
 shiftlabel_dollar=250
 p_PnL_bar <- ggplot(data =  trades_strategies_for_pnl) +
@@ -242,12 +237,12 @@ p_total_line <- ggplot(data = trades_strategies_for_pnl) +
   geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
     geom_line(aes(x = day_opened_midday, y = Total, group=1), color="blue", size=2) + xlab("") + geom_text(aes(x = day_opened, y = 100), label="   ") + 
     ylab("Total") + theme(legend.position = "none") + geom_text(data = trades_strategies_for_pnl %>% filter(!is.na(PnL)), aes(x = day_opened_midday, y = Total+ifelse(PnL<0,-1,+1)*shiftlabel_dollar*2, label=sprintf('%+.0f$', Total)), color="blue") + 
-    geom_label(aes(x = my_breaks_no_weekends[2], y = performance_stats$Total*.7, hjust = "left", label=paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ,"\n", "Avg. Gain = ", sprintf(performance_stats$AvgGainContract, fmt = "%.0f$"),"\n", "Avg. Loss = ", sprintf(performance_stats$AvgLossContract, fmt = "%.0f$") ,"\n", "Capture = ", sprintf(performance_stats$CaptureRate, fmt = "%.1f%%"), "\n", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$"))), size=3, fill="grey90", alpha=0.6) + 
-  geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,daily_goal), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
+    geom_label(aes(x = my_breaks_no_weekends[2], y = performance_stats$Total*.7, hjust = "left", label=paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ,"\n", "Avg. Gain = ", sprintf(performance_stats$AvgGainContract, fmt = "%.0f$"),"\n", "Avg. Loss = ", sprintf(performance_stats$AvgLossContract, fmt = "%.0f$") ,"\n", "Capture = ", sprintf(performance_stats$CaptureRate, fmt = "%.1f%%"), "\n", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$"))), size=3, fill="grey90", alpha=0.6)
+ #+ geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,daily_goal), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
 print(p_total_line)
 
 #Line chart relative
-trades_strategies_for_pnl_relative <- (trades_strategies_for_pnl %>% mutate(date=as.character(date(day_opened))) %>% left_join(spx_1min %>% filter(date>personal_start_date) %>% group_by(date) %>% summarize(SPX_close=last(Close)))) %>% mutate(relative_gain=(Total/personal_account_size), SPX=SPX_close/SPX_close[1]-1)
+trades_strategies_for_pnl_relative <- (trades_strategies_for_pnl %>% mutate(date=as.character(date(day_opened))) %>% left_join(spx_1min %>% filter(date>=date(personal_start_date)) %>% group_by(date) %>% summarize(SPX_close=last(Close)))) %>% mutate(relative_gain=(Total/personal_account_size), SPX=SPX_close/SPX_close[1]-1)
 p_total_relative <- ggplot(data = trades_strategies_for_pnl_relative) +
   theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + scale_y_continuous(labels = scales::percent_format(accuracy=.01)) +
   geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
@@ -255,8 +250,6 @@ p_total_relative <- ggplot(data = trades_strategies_for_pnl_relative) +
   geom_line(aes(x = day_opened_midday, y = SPX, group=1), color="steelblue2", size=1) + xlab("") +
   ylab("Relative Performance") + geom_text(aes(x = day_opened, y = 0), label="   ") + annotate("text", x = 2, y=0.06, hjust = 0, label="Portfolio", color="blue") + annotate("text", x = 2, y=0.04, hjust = 0, label="S&P500", color="steelblue2")
 print(p_total_relative)
-
-
 
 #VIX plot
 vix_1min_fortrades <- vix_1min %>% filter(timestamp>=personal_start_date)
@@ -270,19 +263,140 @@ for(.day in seq(date(last(vix_1min_fortrades$timestamp))+1, date(x_max), by = "d
 #For plotting now only trading hours
 vix_1min_fortrades <- vix_1min_fortrades %>%
   mutate(timestamp_chr = as.character(timestamp), day = lubridate::day(timestamp),hour = lubridate::hour(timestamp),minute = lubridate::minute(timestamp),new_day = if_else(day != lag(day) | is.na(lag(day)), 1, 0))
-vix_plot <- ggplot(vix_1min_fortrades %>% mutate(Close=ifelse(new_day==1,NA,Close)), aes(x = timestamp_chr, y = Close, group = 1)) + geom_line(na.rm = F) + theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0))
-
-
-
-
-
+vix_plot <- ggplot(vix_1min_fortrades %>% mutate(Close=ifelse(new_day==1,NA,Close)), aes(x = timestamp_chr, y = Close, group = 1)) + geom_line(na.rm = F) + theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + xlab("") + ylab("VIX")
 
 #Arranged combined figure
 #print(ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line, nrow = 3, heights = c(.6,.2,.2), common.legend = T, legend = "bottom", hjust=c(0, 0, 0)))
 print(ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), vix_plot, p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), nrow = 4, heights = c(.55,.15,.15,.15), common.legend = T, legend = "bottom", hjust=c(0, 0, 0, 0)))
-ggsave("Trading_log.pdf", device = "pdf", width = 15, height = 10)
 #now full also (wide scaling the width by months in the data)
 ggsave("Trading_log_full.pdf", device = "pdf", width = 15*interval(personal_start_date, now()) / months(1), height = 10)
-
 ################ END FIGURE ##################
+trades_strategies_full <- trades_strategies
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+############################ loop over monthly figures #######################################
+#get list of all months
+month_list <- seq(as.yearmon(personal_start_date),as.yearmon(now()), 1/12)
+current_month <- month_list[1]
+
+for(current_month in month_list){
+
+spx_1min_fortrades <- spx_1min %>% filter(timestamp>=personal_start_date) %>% filter(as.yearmon(date)==current_month)
+
+x_min <- as.POSIXct(paste0(date(min(spx_1min_fortrades$timestamp)), " 00:00:00"), tz = "America/New_York")
+x_max <- as.POSIXct(paste0(date(max(spx_1min_fortrades$timestamp)), " 23:59:59"), tz = "America/New_York")
+#For plotting now only trading hours
+spx_1min_fortrades <- spx_1min_fortrades %>%
+  mutate(timestamp_chr = as.character(timestamp), day = lubridate::day(timestamp),hour = lubridate::hour(timestamp),minute = lubridate::minute(timestamp),new_day = if_else(day != lag(day) | is.na(lag(day)), 1, 0))
+trades_strategies <- trades_strategies_full %>% filter(as.yearmon(date_opened)==current_month) %>% 
+  mutate(timestamp_chr = as.character(date_opened), day = lubridate::day(timestamp),hour = lubridate::hour(timestamp),minute = lubridate::minute(timestamp),timestamp_chr_closed = as.character(date_closed), timestamp_chr_middle=as.character(as.POSIXct((as.numeric(date_closed) + as.numeric(date_opened)) / 2, origin = '1970-01-01', tz="America/New_York")))
+
+my_breaks <-spx_1min_fortrades$timestamp_chr[seq.int(1,length(spx_1min_fortrades$timestamp_chr) , by = 60*6.5)] #every day 6.5 trading hours!
+my_breaks <- paste(seq.Date(date(x_min), date(x_max), by = "day"), "09:30:00")
+
+#in ggplot: Candlestick Chart
+shiftlabel=20;
+p_candlestick_trades <- ggplot(spx_1min_fortrades %>% mutate(Close=ifelse(new_day==1,NA,Close)), aes(x = timestamp_chr, y = Close, group = 1)) +  
+  geom_line(na.rm = F) +
+  theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) +
+  #Credit Spreads
+  geom_segment(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, colour = type), size=2) +
+  geom_segment(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")), aes(x = timestamp_chr, y = strike_long, xend = timestamp_chr_closed, yend = strike_long, colour = type), size=0.5) + 
+  xlab("") + ylab("SPX") + 
+  scale_colour_manual(values = c("Put Credit Spread"="blue", "Call Credit Spread"="orange", "Iron Butterfly"="green"), labels=c("Put Credit Spread"="Put Credit Spread", "Call Credit Spread"="Call Credit Spread", "Iron Butterfly"="Iron Butterfly"), name="Strategy")
+#Add labels if gains or losses there
+if(nrow(trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(debit)>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
+if(nrow(trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(str_detect(type, "Credit Spread")) %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike + ifelse(putCall=="P", -shiftlabel,+shiftlabel), label=str_glue("{contracts}x{format(credit, digits = 2, nsmall = 2)}{ifelse(as.numeric(format(debit, digits = 2, nsmall = 2))>0,paste0('>',format(debit, digits = 2, nsmall = 2)),'')} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
+#Add Iron Butterflys
+if(nrow(trades_strategies %>% filter(type=="Iron Butterfly"))>0) p_candlestick_trades <- p_candlestick_trades + geom_segment(data=trades_strategies %>% filter(type=="Iron Butterfly"), aes(x = timestamp_chr, y = strike, xend = timestamp_chr_closed, yend = strike, color = type), size=2)
+if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL>0), aes(x = timestamp_chr_middle, y = strike+shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n +{round(PnL)}$")), size=3, color="darkgreen", alpha=0.5)
+if(nrow(trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0))>0) p_candlestick_trades <- p_candlestick_trades + geom_label(data=trades_strategies %>% filter(type=="Iron Butterfly") %>% filter(PnL<0), aes(x = timestamp_chr_middle, y = strike +shiftlabel, label=str_glue("IF:{contracts}x{format(credit, digits = 2, nsmall = 2)}>{format(debit, digits = 2, nsmall = 2)} \n {round(PnL)}$")), size=3, color="darkred", alpha=0.5)
+print(p_candlestick_trades)
+
+#PnL
+my_breaks_no_weekends <- paste(unique(spx_1min_fortrades$date), "09:30:00")
+trades_strategies_for_pnl <- trades_strategies %>% mutate(day_opened= paste(as.Date(day_opened),"09:30:00")) %>% group_by(day_opened) %>% summarize(PnL=sum(PnL)) %>% mutate(Total=cumsum(PnL)) %>% complete(day_opened=my_breaks_no_weekends) %>% mutate(day_opened_midday=paste(date(day_opened), "12:45:00")) %>% mutate(PnL=ifelse(day_opened==paste(as.Date(today()),"09:30:00"), 0, PnL)) %>% mutate(Total=zoo::na.locf(Total, na.rm=F))
+trades_strategies_for_pnl <- trades_strategies_for_pnl %>% filter(as.yearmon(day_opened_midday)==current_month)
+#Bar chart per day
+shiftlabel_dollar=250
+p_PnL_bar <- ggplot(data =  trades_strategies_for_pnl) +
+  theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + scale_y_continuous(labels = dollar) +
+  geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
+  geom_bar(aes(x = day_opened_midday, y = PnL, fill=as.character(sign(PnL))), width = 1, stat = "identity", na.rm = F) + xlab("") + ylab("Daily PnL")  + scale_fill_manual(breaks = c(-1,+1,0), values = c("darkred", "darkgreen", "black")) + theme(legend.position = "none") + geom_text(aes(x = day_opened_midday, y = sign(PnL)*(abs(PnL)+shiftlabel_dollar), label=sprintf('%+.0f$', PnL))) +
+  geom_text(aes(x = day_opened, y = 100), label="   ")
+print(p_PnL_bar)
+
+#Line chart total
+p_total_line <- ggplot(data = trades_strategies_for_pnl) +
+  theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + scale_y_continuous(labels = dollar) +
+  geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
+  geom_line(aes(x = day_opened_midday, y = Total, group=1), color="blue", size=2) + xlab("") + geom_text(aes(x = day_opened, y = 100), label="   ") + 
+  ylab("Total") + theme(legend.position = "none") + geom_text(data = trades_strategies_for_pnl %>% filter(!is.na(PnL)), aes(x = day_opened_midday, y = Total+ifelse(PnL<0,-1,+1)*shiftlabel_dollar*2, label=sprintf('%+.0f$', Total)), color="blue") 
+  # + geom_label(aes(x = my_breaks_no_weekends[2], y = performance_stats$Total*.7, hjust = "left", label=paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ,"\n", "Avg. Gain = ", sprintf(performance_stats$AvgGainContract, fmt = "%.0f$"),"\n", "Avg. Loss = ", sprintf(performance_stats$AvgLossContract, fmt = "%.0f$") ,"\n", "Capture = ", sprintf(performance_stats$CaptureRate, fmt = "%.1f%%"), "\n", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$"))), size=3, fill="grey90", alpha=0.6) 
+# + geom_line(data=trades_strategies_for_pnl %>% mutate(planned_PnL=ifelse(is.na(PnL),0,daily_goal), planned_Total=cumsum(planned_PnL)), aes(x = day_opened_midday, y = planned_Total, group=1), size=0.5, color="blue", linetype="dashed")
+print(p_total_line)
+
+#Line chart relative
+trades_strategies_for_pnl_relative <-trades_strategies_for_pnl  %>% filter(as.yearmon(day_opened)==current_month)
+trades_strategies_for_pnl_relative <- (trades_strategies_for_pnl_relative %>% mutate(date=as.character(date(day_opened))) %>% left_join(spx_1min %>% filter(as.yearmon(date)==current_month) %>% filter(date>=date(personal_start_date)) %>% group_by(date) %>% summarize(SPX_close=last(Close)))) %>% mutate(relative_gain=(Total/personal_account_size), SPX=SPX_close/SPX_close[1]-1)
+p_total_relative <- ggplot(data = trades_strategies_for_pnl_relative) +
+  theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + scale_y_continuous(labels = scales::percent_format(accuracy=.01)) +
+  geom_line(data = last(spx_1min_fortrades), aes(x = timestamp_chr, y = Close*0, group=1), color="white", alpha=0) + 
+  geom_line(aes(x = day_opened_midday, y = relative_gain, group=1), color="blue", size=2) +
+  geom_line(aes(x = day_opened_midday, y = SPX, group=1), color="steelblue2", size=1) + xlab("") +
+  ylab("Relative Performance") + geom_text(aes(x = day_opened, y = 0), label="   ") + annotate("text", x = 2, y=0.06, hjust = 0, label="Portfolio", color="blue") + annotate("text", x = 2, y=0.04, hjust = 0, label="S&P500", color="steelblue2")
+print(p_total_relative)
+
+#VIX plot
+vix_1min_fortrades <- vix_1min %>% filter(timestamp>=personal_start_date) %>% filter(as.yearmon(date)==current_month)
+#now only 9:30 - 15:59 for plotting
+vix_1min_fortrades <- vix_1min_fortrades[vix_1min_fortrades$time >= "09:30:00" & vix_1min_fortrades$time <= "15:59:00",]
+#For plotting now only trading hours
+vix_1min_fortrades <- vix_1min_fortrades %>%
+  mutate(timestamp_chr = as.character(timestamp), day = lubridate::day(timestamp),hour = lubridate::hour(timestamp),minute = lubridate::minute(timestamp),new_day = if_else(day != lag(day) | is.na(lag(day)), 1, 0))
+vix_plot <- ggplot(vix_1min_fortrades %>% mutate(Close=ifelse(new_day==1,NA,Close)), aes(x = timestamp_chr, y = Close, group = 1)) + geom_line(na.rm = F) + theme_tq() + scale_x_discrete(breaks = my_breaks, drop=F, labels = format(as.POSIXct(my_breaks, tz="America/New_York"), "%e %b"), expand = c(0, 0)) + xlab("") + ylab("VIX")
+#Arranged combined figure
+#print(ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line, nrow = 3, heights = c(.6,.2,.2), common.legend = T, legend = "bottom", hjust=c(0, 0, 0)))
+p_arranged <- ggarrange(p_candlestick_trades + theme(axis.title.y = element_text(margin = margin(t = 0, r = 15, b = 0, l = 0))), p_PnL_bar + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_line + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), p_total_relative + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank()), nrow = 4, heights = c(.55,.15,.15,.15), common.legend = T, legend = "bottom", hjust=c(0, 0, 0, 0))
+
+#Some basic statistics
+performance_stats_type <- trades_strategies %>% group_by(type) %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), CaptureRate=100*Total/sum(credit*contracts*100), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
+performance_stats <- trades_strategies %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), CaptureRate=100*Total/sum(credit*contracts*100), Commissions=sum(commissions_opened+commissions_closed), AvgGainContract=mean(PnL[PnL>0]/contracts[PnL>0]), AvgLossContract=mean(PnL[PnL<0]/contracts[PnL<0])) %>% as.data.frame()
+
+annotate_figure(p_arranged,
+                top = text_grob(as.yearmon(current_month), color = "black", just = "left", face = "bold", size = 14),
+                bottom = text_grob(paste0("PoP = ", sprintf(performance_stats$PoP, fmt = "%.1f%%") ," ", "Avg. Gain = ", sprintf(performance_stats$AvgGainContract, fmt = "%.0f$")," ", "Avg. Loss = ", sprintf(performance_stats$AvgLossContract, fmt = "%.0f$") ," ", "Capture = ", sprintf(performance_stats$CaptureRate, fmt = "%.1f%%"), " ", "Commissions = ", sprintf(performance_stats$Commissions, fmt = "%.2f$")), color = "black", just="center", size = 10)
+                )
+ggsave(str_glue("Trading_log_{gsub(' ','_',as.yearmon(current_month))}.pdf"), device = "pdf", width = 15, height = 10)
+}
+################ END FIGURE ##################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
