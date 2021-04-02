@@ -1,0 +1,436 @@
+//@version=4
+asd1 = float(0)
+stage = string('empty')
+study('Doms 0dte', overlay = true)
+
+// Percentage Change 
+
+PctChange = (close - close[1])/close[1] * 100
+PCcolor = iff(PctChange > 0, color.green, iff(PctChange < 0, color.red, iff(PctChange == 0, color.gray, na)))
+PctChangeTrend = if PctChange > 0 
+    1 
+else 
+    if PctChange < 0 
+        -1 
+    else 
+        0
+
+// plot(PctChange, color = PCcolor)
+
+// Sectors
+
+PCXLK = security("AMEX:XLK", "1440", close)[1]
+PCXLB = security("AMEX:XLB", "1440", close)[1]
+PCXLP = security("AMEX:XLP", "1440", close)[1]
+PCXLY = security("AMEX:XLY", "1440", close)[1]
+PCXLI = security("AMEX:XLI", "1440", close)[1]
+PCXLC = security("AMEX:XLC", "1440", close)[1]
+PCXLV = security("AMEX:XLV", "1440", close)[1]
+PCXLF = security("AMEX:XLF", "1440", close)[1]
+PCXLRE = security("AMEX:XLRE", "1440", close)[1]
+PCXLE = security("AMEX:XLE", "1440", close)[1]
+PCXLU = security("AMEX:XLU", "1440", close)[1]
+
+closeXLK  = security("AMEX:XLK", "1440", close)
+closeXLB  = security("AMEX:XLB", "1440", close)
+closeXLP  = security("AMEX:XLP", "1440", close)
+closeXLY  = security("AMEX:XLY", "1440", close)
+closeXLI  = security("AMEX:XLI", "1440", close)
+closeXLC  = security("AMEX:XLC", "1440", close)
+closeXLV  = security("AMEX:XLV", "1440", close)
+closeXLF  = security("AMEX:XLF", "1440", close)
+closeXLRE  = security("AMEX:XLRE", "1440", close)
+closeXLE  = security("AMEX:XLE", "1440", close)
+closeXLU  = security("AMEX:XLU", "1440", close)
+
+PctChangeXLK  = (closeXLK  - PCXLK) / PCXLK
+PctChangeXLB  = (closeXLB  - PCXLB) / PCXLB
+PctChangeXLP  = (closeXLP  - PCXLP) / PCXLP
+PctChangeXLY  = (closeXLY  - PCXLY) / PCXLY
+PctChangeXLI  = (closeXLI  - PCXLI) / PCXLI
+PctChangeXLC  = (closeXLC  - PCXLC) / PCXLC
+PctChangeXLV  = (closeXLV  - PCXLV) / PCXLV
+PctChangeXLF  = (closeXLF  - PCXLF) / PCXLF
+PctChangeXLRE  = (closeXLRE  - PCXLRE) / PCXLRE
+PctChangeXLE  = (closeXLE  - PCXLE) / PCXLE
+PctChangeXLU  = (closeXLU  - PCXLU) / PCXLU
+
+sector = 100*(PctChangeXLB*0.0268)+(PctChangeXLP*0.0671)+(PctChangeXLY*0.1113)+(PctChangeXLI*0.087)+(PctChangeXLC*0.1107)+(PctChangeXLV*0.138)+(PctChangeXLF*0.1058)+(PctChangeXLRE*0.0248)+(PctChangeXLE*0.0257)+(PctChangeXLU*0.0283)
+
+sectorcolor = iff(sector[0] > 0, color.green, iff(sector[0] < 0, color.red, iff(sector[0] == 0, color.gray, na)))
+
+sectorTrend = if sector > 0
+    1
+else 
+    if sector < 0 
+        -1
+    else 
+        0
+
+// plot(series = sector, color = sectorcolor)
+
+
+// Market Internals 
+
+tiksp  = security("USI:TICK", "1440", close)
+tikspTrend = if tiksp[0]>0  
+    1
+else 
+    if tiksp[0] < 0
+        -1
+    else 
+        0
+
+tikcolor = iff(tiksp[0] > 0, color.green,iff(tiksp[0] < 0, color.red,iff(tiksp[0] == 0, color.gray, na)))
+
+// plot(series = tikspTrend, color = tikcolor)
+
+// Up Vol vs Down Vol
+
+UVOL = security("USI:UVOL", "1440", close)
+DVOL = security("USI:DVOL", "1440", close)
+NYSEratio = if UVOL >= DVOL
+    UVOL/DVOL
+else 
+    -DVOL/UVOL
+    
+NYSEcolor = iff(UVOL/DVOL > 1, color.green,iff(UVOL/DVOL < 1, color.red, na))
+
+// plot(series = NYSEratio, color = NYSEcolor)
+
+// Volspd
+
+uspd = security("USI:UVOL","1440", hlc3)
+dspd = security("USI:DVOL","1440", hlc3)
+volspd = UVOL - DVOL
+volspdTrend = if volspd > 0 
+    1
+else 
+    if volspd < 0 
+        -1
+    else 
+        0
+
+volcolor = iff(UVOL - DVOL > 1, color.green,iff(UVOL - DVOL < 0, color.red, iff(UVOL == DVOL, color.gray, na)))
+// plot(series = volspd, color = volcolor)
+
+// ADSPD symbol
+
+adspd = security("USI:ADVDEC.NY", "1", close)
+adspdTrend = if adspd[0] > 0
+    1
+else 
+    if adspd[0] < 0
+        -1
+    else 
+        0
+
+coloradspd = iff(adspd[0] > 0, color.green,iff(adspd[0] < 1, color.red, iff(adspd[0] == 0, color.gray, na)))
+
+// plot(series = adspd, color = coloradspd)
+
+
+// TIK data
+
+tikData = security("USI:TICK", "1440", hlc3)
+cumulativeTickValue = if time(timeframe.period, "0930-1600") 
+    tikData[0] + tikData[1] 
+else 
+    0
+
+cumulativeTickPlot = if cumulativeTickValue != 0
+    cumulativeTickValue 
+else 
+    na
+
+cumulativeTickPlotTrend = if cumulativeTickPlot > cumulativeTickPlot[1] 
+    1 
+else 
+    if cumulativeTickPlot < cumulativeTickPlot[1] 
+        -1 
+    else 
+        0
+
+// Volspd Data
+
+volspdData = uspd - dspd
+cumulativeVolspdValue = if time(timeframe.period, "0930-1600") 
+    uspd[0]+uspd[1] -dspd[0] - dspd[1] 
+else 
+    0
+
+cumulativeVolspdPlot = if cumulativeVolspdValue != 0
+    cumulativeVolspdValue 
+else 
+    na
+
+cumulativeVolspdPlotTrend = if cumulativeVolspdPlot > cumulativeVolspdPlot[1] 
+    1 
+else 
+    if cumulativeVolspdPlot < cumulativeVolspdPlot[1] 
+        -1 
+    else 
+        0
+
+// ADSPD Data
+
+adspdData = security("USI:ADVDEC.NY", "1440", hlc3)
+cumulativeAdspdValue = if time(timeframe.period, "0930-1600") 
+    adspdData[0] + adspdData[1]  
+else 
+    0
+
+cumulativeAdspdPlot = if cumulativeAdspdValue != 0
+    cumulativeAdspdValue 
+else 
+    na
+
+cumulativeAdspdPlotTrend = if cumulativeAdspdPlot > cumulativeAdspdPlot[1] 
+    1 
+else 
+    if cumulativeAdspdPlot < cumulativeAdspdPlot[1] 
+        -1 
+    else 
+        0
+
+
+// Market stage
+price = close 
+length = 10
+
+tmp1 = if price > price[1] 
+    price - price[1] 
+else 
+    0
+
+tmp2 = if price[1] > price 
+    price[1] - price 
+else 
+    0
+    
+d2 = sum(tmp1, length)
+d4 = sum(tmp2, length)
+
+cond = if d2+d4 ==0
+    1
+else 
+    0
+
+ad3 = if cond == 1
+    0
+else 
+    100*(d2-d4)/(d2+d4)
+
+coeff = 2/(length+1)*abs(ad3)/100
+
+// var asd = array.new_float(0) 
+
+asd = coeff*price+(asd1)*(1-coeff)
+asd1 := asd[1]     
+
+VMA = asd
+
+volumeSPX = security('SP:SPX','1440', volume)
+
+vwma8 = sum(volumeSPX * close, 8) / sum(volumeSPX, 8)
+vwma21 = sum(volumeSPX * close, 21) / sum(volumeSPX, 21)
+vwma34 = sum(volumeSPX * close, 34) / sum(volumeSPX, 34)
+
+bullish =  if vwma8 > vwma21 and vwma21 > vwma34 
+    1 
+else 
+    0
+
+bearish = if vwma8 < vwma21 and vwma21 < vwma34 
+    1 
+else 
+    0
+
+distribution = if not bullish and not bearish 
+    1 
+else 
+    0
+
+stage := if bullish > 0
+    stage := 'Acceleration'
+else
+    if bearish > 0 
+        stage := 'Deceleration'
+    else
+        if close >= VMA 
+            
+            stage := 'Accumulation'
+        else 
+        
+            stage := 'Distribution'
+
+distcolor = iff(bullish > 0, color.green,iff(bearish > 0, color.red, iff(close >= VMA, color.yellow, color.orange)))
+
+marketStageTrend = if bullish 
+    1 
+else 
+    if bearish
+        -1 
+    else 
+        if close >= VMA 
+            0.5 
+        else 
+            if close < VMA 
+                -0.5 
+            else 
+                0
+
+// INSERT LABEL FOR STAGE
+
+
+// Market Mood
+mood = 100 * (tikspTrend + volspdTrend +  adspdTrend + cumulativeTickPlotTrend + cumulativeVolspdPlotTrend + cumulativeAdspdPlotTrend + PctChangeTrend + marketStageTrend + sectorTrend)/9
+moodcolor = if mood > 0 
+    color.green
+
+else 
+    color.red
+
+// plot(series = mood, color = moodcolor)
+
+// Recommendation 
+SpreadCondition =  if PctChange > 0 and sector > 0 and  volspd > 0 and tiksp > 0 and adspd > 0 
+    'PUTSpread'
+else 
+    if PctChange < 0 and sector < 0 and volspd < 0 and tiksp < 0 and adspd < 0
+        'CALLSpread'
+
+Spreadcolor = if mood < 0
+    color.green
+else 
+    color.red
+    
+Spreadcolor1 = if mood > 0
+    color.green
+else
+    color.red
+
+prevPrice = open[-1]
+priceCST = (open)[0] * (1 + 0.01)
+pricePST = (open)[0] * (1 - 0.01)
+
+// plot(series = pricePST, color = Spreadcolor)
+// plot(series = priceCST, color = Spreadcolor1)
+
+
+// Previous Daily Close
+
+length1 = 1
+displace = 1
+Open = if close[1] < close
+    1
+else 
+    if close[1] > close
+        -1
+    else 
+        0
+coloropen = iff(Open == 1, color.green, iff(Open == -1, color.red, iff(Open == 0, color.gray, na )))
+// plot(series = Open, color = coloropen)
+
+// Decay speed approximation
+src = input(title="Candles", type=input.integer, defval=12)
+IV = input(title="VIX", type=input.integer, defval=30)
+delta = input(title="Delta", type=input.integer, defval=5)
+
+x=(time-timestamp(year(time),month(time),dayofmonth(time),-6,0,0))/86400000
+y = (1570.4*x*x*x - 3347.2*x*x + 2395.1*x - 566.61)*IV/30 //limit delta 5
+//y = (1336.1*x*x*x - 2847.9*x*x + 2037.8*x - 482.08)*IV/30 //limit delta 10
+//y = (1065.7*x*x*x - 2271.5*x*x + 1625.4*x - 384.52)*IV/30 //limit delta 20
+//y = (882.37*x*x*x - 1880.7*x*x + 1345.7*x - 318.37)*IV/30 //limit delta 30
+
+limit =y/7.50318569963115*(-0.000136*delta*delta*delta+0.0103*delta*delta-0.3464*delta+8.9658)
+if (hour>14)
+    limit := 1
+
+highestHigh = highest(high, src)
+lowestLow = lowest(low, src)
+speed = (highestHigh - lowestLow)/src*12
+barva=color.red
+// plot(speed, color=speed>limit ? color.red : color.green, linewidth=2)
+
+// Visualization 
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+origin = low
+offset = 3
+tp = time - time[1]
+// Labels 
+show_label = input(true, title = 'Show Label?')
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+if show_label
+    // Create label
+    labelText = "Percent change:"+tostring(round(PctChange*10)/10)+"%"
+    ourLabel = label.new(x = time+tp*9, y = origin-offset, text = labelText,xloc= xloc.bar_time, yloc = yloc.price, color = PCcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel[1])
+    
+    // Create label1
+    labelText1 = "Sector:"+tostring(round(sector*100))+"%"
+    ourLabel1 = label.new(x = time+tp*9, y = origin-offset*2, text = labelText1,xloc= xloc.bar_time, yloc = yloc.price, color = sectorcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel1[1])
+    
+    // Create label1
+    labelText2 = "TIKSP:"+tostring(tiksp)
+    ourLabel2 = label.new(x = time+tp*9, y = origin - offset*3, text = labelText2,xloc= xloc.bar_time, yloc = yloc.price, color = tikcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel2[1])
+    
+    // Create label1
+    labelText3 = "VOL:"+tostring(NYSEratio)
+    ourLabel3 = label.new(x = time+tp*9, y = origin-offset*4, text = labelText3,xloc= xloc.bar_time, yloc = yloc.price, color = volcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel3[1])
+    
+    // Create label1
+    labelText4 = "ADSPD:"+tostring(adspd)
+    ourLabel4 = label.new(x = time+tp*9, y = origin-offset*5, text = labelText4,xloc= xloc.bar_time, yloc = yloc.price, color = coloradspd,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel4[1])
+    
+    // Create label1
+    labelText5 = "Stage:"+stage
+    ourLabel5 = label.new(x = time+tp*9, y = origin-offset*6, text = labelText5,xloc= xloc.bar_time, yloc = yloc.price, color = distcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel5[1])
+    
+    // Create label1
+    labelText6 = "Mood:"+tostring(round(mood))
+    ourLabel6 = label.new(x = time+tp*9, y = origin-offset*7, text = labelText6,xloc= xloc.bar_time, yloc = yloc.price, color = moodcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel6[1])
+    
+    // Create label1
+    labelText7= "Rec:"+SpreadCondition
+    ourLabel7 = label.new(x = time+tp*9, y = origin-offset*8, text = labelText7,xloc= xloc.bar_time, yloc = yloc.price, color = color.white,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel7[1])
+    
+    // Create label1
+    labelText8 = "CST:"+tostring(priceCST)
+    ourLabel8 = label.new(x = time+tp*9, y = origin-offset*9, text = labelText8,xloc= xloc.bar_time, yloc = yloc.price, color = Spreadcolor1,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel8[1])
+    
+    // Create label1
+    labelText9 = "PST:"+tostring(pricePST)
+    ourLabel9 = label.new(x = time+tp*9, y = origin - offset*10, text = labelText9,xloc= xloc.bar_time, yloc = yloc.price, color = Spreadcolor,
+     style = label.style_label_center, textalign = text.align_left, size = size.large)
+    
+    label.delete(ourLabel9[1])
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

@@ -4,10 +4,10 @@
 
 
 # get trades from flex query (includes expired options!)
-#install.packages('IButils', type = 'source',repos = c('http://enricoschumann.net/R', getOption('repos')))
-#setup in IB: https://webhelp.tradingdiarypro.com/create_flex_querries_interactive_brokers.htm
+# setup in IB: https://webhelp.tradingdiarypro.com/create_flex_querries_interactive_brokers.htm
 require_package <- function(package){
   if(!is.element(package, .packages(all.available = TRUE))){
+    if (!"IButils" %in% rownames(installed.packages())) install.packages('IButils', type = 'source',repos = c('http://enricoschumann.net/R', getOption('repos')))
     try(install.packages(package, repos="http://cran.rstudio.com"), silent = TRUE)
   }
   suppressPackageStartupMessages(library(package,character.only=T, quietly = TRUE))  
@@ -34,7 +34,7 @@ include_complex_strategies <- F
 load("spx_1min.Rdata"); load("vix_1min.Rdata");
 print(str_glue("Last data SPX from {last(spx_1min$date)}"))
 # Connect to TWS and download SPX minute data if available
-#if(as.Date(previousBusinessDay(Sys.Date()))>last(spx_1min$date)) source("get_tws_data.R")
+if(as.Date(previousBusinessDay(Sys.Date()))>last(spx_1min$date)) source("get_tws_data.R")
 
 
 
@@ -70,7 +70,7 @@ if(file.exists("error_trades.txt")){
   }}
 
 ####### FIFO:  combine opened and closed individual positions and options using FiFo trades > trades_opened_closed ######
-trades_opened <- trades %>% filter(openCloseIndicator=="O") 
+trades_opened <- trades %>% filter(openCloseIndicator!="C") 
 trades_opened_closed <- trades_opened %>% mutate(tradePrice_closed=NA, ibCommission_closed=NA, fifoPnlRealized_closed=NA, timestamp_closed=as.POSIXct(NA, tz = "America/New_York"))
 trades_opened_closed$timestamp_closed <- force_tz(trades_opened_closed$timestamp_closed, "America/New_York")
 #for closing trades compute all relevant variables in per unit values (price, commissions, fifoPnL, and date (earliest))
@@ -126,10 +126,6 @@ for(i in 1:nrow(trades_opened)){
 ####### END FIFO ######
 
 
-#manually overwrite cash-settlted assignments
-trades_opened_closed <- trades_opened_closed %>% mutate(tradePrice_closed=ifelse(description=="SPX 26AUG20 3475.0 C", (3478.73-3475) , tradePrice_closed))
-
-
 #add 0 expiry close out for yesterdays' trades assuming they all expired worthless
 trades_opened_closed <- trades_opened_closed %>% mutate(ibCommission_closed=replace_na(ibCommission_closed,0), tradePrice_closed=replace_na(tradePrice_closed,0))
 trades_opened_closed$timestamp_closed <- as.POSIXct(ifelse(is.na(trades_opened_closed$timestamp_closed), as.POSIXct(paste0(date(trades_opened_closed$timestamp), " 16:20:00"), tz = "America/New_York"), trades_opened_closed$timestamp_closed), tz = "America/New_York", origin = lubridate::origin)
@@ -142,9 +138,19 @@ trades_opened_closed <- trades_opened_closed %>% rowwise() %>% mutate(timestamp 
 trades_opened_closed <- trades_opened_closed %>% mutate(time_opened_round=round_date(timestamp,unit = "10minute")) %>% group_by(description,strike,expiry,putCall,time_opened_round) %>% summarize(tradePrice=weighted.mean(tradePrice,w = quantity), ibCommission=sum(ibCommission), fifoPnlRealized=sum(fifoPnlRealized), timestamp = weighted.mean(timestamp, w = quantity), tradePrice_closed=weighted.mean(tradePrice_closed,w = quantity), ibCommission_closed=sum(ibCommission_closed), fifoPnlRealized_closed=sum(fifoPnlRealized_closed), timestamp_closed=weighted.mean(timestamp_closed, w = quantity), quantity = sum(quantity))
 #Recompute PnL based on individual positions
 trades_opened_closed <- trades_opened_closed %>% mutate(Pnl_recomputed=-(quantity)*(tradePrice - tradePrice_closed)*100+ibCommission+ibCommission_closed)     
+
+
+
+#combine with older data in case
+load("trades_before_brexit.Rdata")
+trades_opened_closed <- rbind(trades_before_brexit, trades_opened_closed)
+
 #write trades_opened_closed.Rdata
 trades_for_models = as.data.frame(trades_opened_closed %>% mutate(timestamp=round_date(timestamp,unit = "1minute"), timestamp_closed=round_date(timestamp_closed,unit = "1minute"), timestamp_closed=as.POSIXct(gsub("16:20:00", "15:59:00", timestamp_closed), tz = "America/New_York", origin = lubridate::origin)) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close)) %>% left_join(vix_1min %>% select(timestamp, Close) %>% rename(VIX_at_open=Close)))  %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(timestamp_closed=timestamp, SPX_at_closed=Close)) %>% left_join(vix_1min %>% select(timestamp, Close) %>% rename(timestamp_closed=timestamp, VIX_at_closed=Close))
 save(trades_for_models, file = "trades_for_models.RData")
+
+
+
 
 #create aggregated strategies (going from complex to simple:
 trades_opened_closed_complex_strategies <- trades_opened_closed %>% group_by(timestamp) %>% mutate(num_diff_strikes=length(unique(strike))) %>% filter(num_diff_strikes==3)
@@ -166,7 +172,7 @@ if(include_complex_strategies) trades_strategies <- rbind(trades_strategies_spre
 trades_strategies <- trades_strategies %>% mutate(day_opened=as.POSIXct(paste0(date(date_opened), " 12:00:00"), tz = "America/New_York")) %>% mutate(minute=round_date(date_opened,unit = "1minute")) %>% left_join(spx_1min %>% select(timestamp, Close) %>% rename(SPX_at_open=Close, minute=timestamp)) %>% mutate(PnL=PnL_strategies_recomputed, strike=strike_short) %>% left_join(vix_1min %>% select(timestamp, Close) %>% rename(VIX_at_open=Close, minute=timestamp))
 
 #verify consistency of fifoPnl
-print(trades %>% group_by(expiry) %>% summarize(PnL_trades_original_IB=sum(fifoPnlRealized, na.rm=T)) %>% full_join(trades_opened_closed %>% group_by(expiry) %>% summarize(PnL_trades_opened_close=sum(fifoPnlRealized_closed, na.rm=T), PnL_opened_closed_recomputed=sum(Pnl_recomputed, na.rm=T))) %>% full_join(trades_strategies %>% group_by(expiry) %>% summarize(PnL_strategies_IB=sum(PnL_strategies_IB, na.rm=T), PnL_strategies_recomputed=sum(PnL_strategies_recomputed, na.rm=T))) %>% as.data.frame())
+print(trades %>% group_by(expiry) %>% summarize(PnL_trades_original_IB=sum(fifoPnlRealized, na.rm=T)) %>% full_join(trades_opened_closed %>% group_by(expiry) %>% summarize(PnL_trades_opened_close=sum(fifoPnlRealized_closed, na.rm=T), PnL_opened_closed_recomputed=sum(Pnl_recomputed, na.rm=T))) %>% full_join(trades_strategies %>% group_by(expiry) %>% summarize(PnL_strategies_IB=sum(PnL_strategies_IB, na.rm=T), PnL_strategies_recomputed=sum(PnL_strategies_recomputed, na.rm=T))) %>% as.data.frame() %>% filter(!(round(PnL_strategies_recomputed)==round(PnL_strategies_IB))))
 
 #Some basic statistics
 performance_stats_type <- trades_strategies %>% group_by(type) %>% summarize(AvgGain=mean(PnL[PnL>0]), AvgLoss=mean(PnL[PnL<0]), PoP=sum(sign(PnL[PnL>0]))/length((PnL))*100, NumTrades=length(PnL), Total=sum(PnL), CaptureRate=100*Total/sum(credit*contracts*100), Commissions=sum(commissions_opened+commissions_closed)) %>% as.data.frame()
