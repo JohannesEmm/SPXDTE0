@@ -21,3 +21,4 @@ error_trades.txt
 *.png
 *.xml
 *.zip
+trades*.Rdata
